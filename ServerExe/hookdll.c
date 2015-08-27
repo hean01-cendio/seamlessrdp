@@ -34,6 +34,12 @@
 
 #define EXTERN __declspec(dllexport)
 
+#ifdef _WIN32
+#define DOMAIN "seamlesshook32.dll"
+#else
+#define DOMAIN "seamlesshook64.dll"
+#endif
+
 #define FOCUS_MSG_NAME "WM_SEAMLESS_FOCUS"
 static UINT g_wm_seamless_focus = 0;	// Non-zero if DLL is initialized
 
@@ -164,6 +170,8 @@ update_position(HWND hwnd)
 	HWND blocked_hwnd;
 	unsigned int serial;
 
+	logger_log(DOMAIN, LOG_DEBUG0, "update_position(%p)", hwnd);
+
 	WaitForSingleObject(g_mutex, INFINITE);
 	blocked_hwnd = long_to_hwnd(g_shdata->block_move_hwnd);
 	serial = g_shdata->block_move_serial;
@@ -198,6 +206,8 @@ update_zorder(HWND hwnd)
 	HWND behind;
 	HWND block_hwnd, block_behind;
 	unsigned int serial;
+
+	logger_log(DOMAIN, LOG_DEBUG0, "update_zorder(%p)", hwnd);
 
 	WaitForSingleObject(g_mutex, INFINITE);
 	serial = g_shdata->blocked_zchange_serial;
@@ -245,6 +255,8 @@ update_icon(HWND hwnd, HICON icon, int large)
 	char buf[32 * 32 * 4];
 	char asciibuf[ICON_CHUNK * 2 + 1];
 
+	logger_log(DOMAIN, LOG_DEBUG0, "update_icon(%p)", hwnd);
+
 	size = extract_icon(icon, buf, sizeof(buf));
 	if (size <= 0)
 		return;
@@ -280,6 +292,9 @@ wndproc_hook_proc(int code, WPARAM cur_thread, LPARAM details)
 
 	LONG style;
 
+	logger_log(DOMAIN, LOG_DEBUG1, "wnd_hook_proc(%d, %ul, %ul, %ul)", code,
+		cur_thread, details);
+
 	if (!g_initialized)
 		goto end;
 
@@ -293,6 +308,9 @@ wndproc_hook_proc(int code, WPARAM cur_thread, LPARAM details)
 	wparam = ((CWPSTRUCT *) details)->wParam;
 	lparam = ((CWPSTRUCT *) details)->lParam;
 
+	logger_log(DOMAIN, LOG_INFO,
+		"Window proc for %p got message %ul params %ul,%ul", hwnd, msg, wparam,
+		lparam);
 	if (!is_toplevel(hwnd)) {
 		goto end;
 	}
@@ -438,6 +456,9 @@ wndprocret_hook_proc(int code, WPARAM cur_thread, LPARAM details)
 
 	LONG style;
 
+	logger_log(DOMAIN, LOG_DEBUG0, "wndprocret_hook_proc(%d, %ul, %ul)", code,
+		cur_thread, details);
+
 	if (!g_initialized)
 		goto end;
 
@@ -450,6 +471,10 @@ wndprocret_hook_proc(int code, WPARAM cur_thread, LPARAM details)
 	msg = ((CWPRETSTRUCT *) details)->message;
 	wparam = ((CWPRETSTRUCT *) details)->wParam;
 	lparam = ((CWPRETSTRUCT *) details)->lParam;
+
+	logger_log(DOMAIN, LOG_INFO,
+		"Window return proc for %p got message %ul params %ul,%ul", hwnd, msg,
+		wparam, lparam);
 
 	if (!is_toplevel(hwnd)) {
 		goto end;
@@ -529,6 +554,9 @@ cbt_hook_proc(int code, WPARAM wparam, LPARAM lparam)
 	if (code < 0)
 		goto end;
 
+	logger_log(DOMAIN, LOG_DEBUG0, "cbt_hook_proc(%d, %ul, %ul)", code, wparam,
+		lparam);
+
 	check_conn_serial();
 
 	switch (code) {
@@ -595,6 +623,7 @@ IncConnectionSerial(void)
 EXTERN void
 SetHooks(void)
 {
+	logger_log(DOMAIN, LOG_INFO, "Set window hooks.");
 	if (!g_cbt_hook)
 		g_cbt_hook = SetWindowsHookEx(WH_CBT, cbt_hook_proc, g_instance, 0);
 
@@ -611,6 +640,7 @@ SetHooks(void)
 EXTERN void
 RemoveHooks(void)
 {
+	logger_log(DOMAIN, LOG_INFO, "Remove window hooks.");
 	if (g_cbt_hook)
 		UnhookWindowsHookEx(g_cbt_hook);
 
@@ -786,15 +816,28 @@ DllMain(HINSTANCE hinstDLL, DWORD ul_reason_for_call, LPVOID lpReserved)
 	HANDLE filemapping = NULL;
 	switch (ul_reason_for_call) {
 	case DLL_PROCESS_ATTACH:
+
+		logger_log(DOMAIN, LOG_INFO, "DLL Process attach");
+
 		// remember our instance handle
 		g_instance = hinstDLL;
 
 		g_mutex = CreateMutex(NULL, FALSE, "Local\\SeamlessDLL");
+		if (g_mutex == NULL)
+			logger_log(DOMAIN, LOG_ERROR,
+				"Failed to create mutex 'Local\\SeamlessDLL`: %ul",
+				GetLastError());
 
 		filemapping = CreateFileMapping(INVALID_HANDLE_VALUE,
 			NULL,
 			PAGE_READWRITE,
 			0, sizeof(shared_variables), "Local\\SeamlessRDPData");
+
+		if (g_mutex == NULL)
+			logger_log(DOMAIN, LOG_ERROR,
+				"Failed to create filemapping 'Local\\SeamlessRDPData`: %ul",
+				GetLastError());
+
 
 		if (filemapping) {
 			/* From MSDN: The initial contents of
@@ -810,7 +853,11 @@ DllMain(HINSTANCE hinstDLL, DWORD ul_reason_for_call, LPVOID lpReserved)
 			ReleaseMutex(g_mutex);
 			g_wm_seamless_focus = RegisterWindowMessage(FOCUS_MSG_NAME);
 			g_initialized = 1;
-		}
+			logger_log(DOMAIN, LOG_INFO, "Hook DLL is now initialized.");
+		} else
+			logger_log(DOMAIN, LOG_ERROR,
+				"Unrecoverable error, hook DLL not properly initialized...");
+
 		break;
 
 	case DLL_THREAD_ATTACH:
@@ -820,6 +867,7 @@ DllMain(HINSTANCE hinstDLL, DWORD ul_reason_for_call, LPVOID lpReserved)
 		break;
 
 	case DLL_PROCESS_DETACH:
+		logger_log(DOMAIN, LOG_INFO, "DLL Process deattach");
 		if (vchannel_is_open()) {
 			vchannel_write("DESTROYGRP", "0x%08lx, 0x%08lx",
 				GetCurrentProcessId(), 0);

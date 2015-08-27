@@ -206,10 +206,12 @@ logger_log(const char *domain, int level, const char *format, ...)
 	_vsnprintf(line, sizeof(line), format, argp);
 	va_end(argp);
 
-	snprintf(buf, sizeof(buf), "%ul, %s(%s): %s\r\n", time(NULL), level2str[level], domain, line);
+	snprintf(buf, sizeof(buf), "%ul, %s(%s): %s\r\n", time(NULL),
+		level2str[level], domain, line);
 	snprintf(fname, sizeof(fname), "%s\\seamlessrdp.log", getenv("TEMP"));
 
-	h = CreateFile(fname, FILE_APPEND_DATA, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	h = CreateFile(fname, FILE_APPEND_DATA, 0, NULL, OPEN_ALWAYS,
+		FILE_ATTRIBUTE_NORMAL, NULL);
 	if (h == INVALID_HANDLE_VALUE)
 		return;
 
@@ -228,5 +230,6 @@ logger_rotate()
 	snprintf(dest, sizeof(dest), "%s\\seamlessrdp.log.old", getenv("TEMP"));
 	res = MoveFile(src, dest);
 	if (!res && GetLastError() != ERROR_FILE_NOT_FOUND)
-		logger_log(DOMAIN, LOG_WARNING, "Failed to move logfile: %ul", GetLastError());
+		logger_log(DOMAIN, LOG_WARNING, "Failed to move logfile: %ul",
+			GetLastError());
 }

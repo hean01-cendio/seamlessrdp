@@ -35,6 +35,7 @@
 #include "resource.h"
 
 #define APP_NAME "SeamlessRDP Shell"
+#define DOMAIN "seamlessrdpshell"
 // TODO: the session timeout should match the liftime of the RDP reconnection blob
 #define SESSION_TIMEOUT 60
 #define HELPER_TIMEOUT 2000
@@ -189,6 +190,8 @@ enum_cb(HWND hwnd, LPARAM lparam)
 		&& !strcmp(classname, "ConsoleWindowClass"))
 		return TRUE;
 
+	logger_log(DOMAIN, LOG_DEBUG0, "enum_cb(%p, %ul)", hwnd, lparam);
+
 	if (styles & WS_POPUP)
 		parent = (HWND) GetWindowLongPtr(hwnd, GWLP_HWNDPARENT);
 	else
@@ -278,6 +281,7 @@ launch_appW(LPWSTR cmdline)
 static void
 do_sync(void)
 {
+	logger_log(DOMAIN, LOG_DEBUG0, "do_sync()");
 	g_vchannel_block_fn();
 
 	g_vchannel_write_fn("SYNCBEGIN", "0x0");
@@ -292,24 +296,29 @@ do_sync(void)
 static void
 do_state(unsigned int serial, HWND hwnd, int state)
 {
+	logger_log(DOMAIN, LOG_DEBUG0, "do_state(%d,%p,%d)", serial, hwnd, state);
 	g_set_state_fn(serial, hwnd, state);
 }
 
 static void
 do_position(unsigned int serial, HWND hwnd, int x, int y, int width, int height)
 {
+	logger_log(DOMAIN, LOG_DEBUG0, "do_position(%d,%p,%d,%d,%d,%d)", serial,
+		hwnd, x, y, width, height);
 	g_move_window_fn(serial, hwnd, x, y, width, height);
 }
 
 static void
 do_zchange(unsigned int serial, HWND hwnd, HWND behind)
 {
+	logger_log(DOMAIN, LOG_DEBUG0, "do_zchange(%d,%p,%p)", serial, hwnd, hwnd);
 	g_zchange_fn(serial, hwnd, behind);
 }
 
 static void
 do_focus(unsigned int serial, HWND hwnd)
 {
+	logger_log(DOMAIN, LOG_DEBUG0, "do_focus(%d,%p)", serial, hwnd);
 	g_focus_fn(serial, hwnd);
 }
 
@@ -318,6 +327,7 @@ do_focus(unsigned int serial, HWND hwnd)
 static void
 do_destroy(HWND hwnd)
 {
+	logger_log(DOMAIN, LOG_DEBUG0, "do_destroy(%p)", hwnd);
 	SendMessage(hwnd, WM_CLOSE, 0, 0);
 }
 
@@ -325,22 +335,19 @@ static void
 do_spawn(unsigned int serial, char *cmd)
 {
 	HANDLE app = NULL;
-	wchar_t *wcmd, *wmsg;
+	wchar_t *wcmd;
+
+	logger_log(DOMAIN, LOG_DEBUG0, "do_spawn(%d,\"%s\")", serial, cmd);
 
 	if (utf8_to_utf16(cmd, &wcmd) != 0) {
-		messageW
-			(L"Failed to launch application due to invalid unicode in command line.");
+		logger_log(DOMAIN, LOG_ERROR,
+			"Failed to spawn application due to invalid unicode in command line.");
 		return;
 	}
 
 	app = launch_appW(wcmd);
 	if (!app) {
-		char msg[256];
-		_snprintf(msg, sizeof(msg),
-			"Unable to launch the requested application:\n%s", cmd);
-		utf8_to_utf16(msg, &wmsg);
-		messageW(wmsg);
-		free(wmsg);
+		logger_log(DOMAIN, LOG_ERROR, "Failed to launch application: %s", cmd);
 	}
 
 	free(wcmd);
@@ -579,7 +586,7 @@ is_desktop_hidden(void)
 static HANDLE
 launch_helper()
 {
-	wchar_t *wmsg;
+	logger_log(DOMAIN, LOG_INFO, "Launching helper hook.");
 	HANDLE app = NULL;
 	SYSTEM_INFO si;
 	GetSystemInfo(&si);
@@ -590,12 +597,9 @@ launch_helper()
 		char cmd[] = "seamlessrdphook32.exe";
 		app = launch_app(cmd);
 		if (!app) {
-			char msg[256];
-			_snprintf(msg, sizeof(msg),
-				"Unable to launch the requested application:\n%s", cmd);
-			utf8_to_utf16(msg, &wmsg);
-			messageW(wmsg);
-			free(wmsg);
+
+			logger_log(DOMAIN, LOG_ERROR,
+				"Unable to launch the requested application: %s", cmd);
 		}
 
 		/* Wait until helper is started, so that it gets included in
@@ -606,8 +610,12 @@ launch_helper()
 		case 0:
 			break;
 		case WAIT_TIMEOUT:
+			logger_log(DOMAIN, LOG_ERROR,
+				"Hooking helper failed to start within time limit.");
+			break;
 		case WAIT_FAILED:
-			messageW(L"Hooking helper failed to start within time limit");
+			logger_log(DOMAIN, LOG_ERROR, "Hooking helper failed to start: %ul",
+				GetLastError());
 			break;
 		}
 	}
@@ -619,6 +627,8 @@ launch_helper()
 static void
 kill_15_9(HANDLE proc, const char *wndname, DWORD timeout)
 {
+	logger_log(DOMAIN, LOG_INFO, "Terminating process with window name: %s",
+		wndname);
 	HWND procwnd;
 	DWORD ret;
 	procwnd = FindWindowEx(HWND_MESSAGE, NULL, "Message", wndname);
@@ -633,11 +643,13 @@ kill_15_9(HANDLE proc, const char *wndname, DWORD timeout)
 	case WAIT_TIMEOUT:
 		// Still running, kill hard
 		if (!TerminateProcess(proc, 1)) {
-			messageW(L"Unable to terminate process");
+			logger_log(DOMAIN, LOG_WARNING,
+				"Timeout while waiting for process to terminate.");
 		}
 		break;
 	case WAIT_FAILED:
-		messageW(L"Unable to wait for process");
+		logger_log(DOMAIN, LOG_ERROR,
+			"Failed to wait for process termination: %ul", GetLastError());
 		break;
 	}
 }
@@ -663,23 +675,29 @@ WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmdline, int cmdshow)
 		return -1;
 	}
 
+	logger_rotate();
+
 	SYSTEM_INFO si;
 	GetSystemInfo(&si);
 	switch (si.wProcessorArchitecture) {
 	case PROCESSOR_ARCHITECTURE_INTEL:
+		logger_log(DOMAIN, LOG_INFO, "Loading i686 hook DLL.");
 		hookdll = LoadLibrary("seamlessrdp32.dll");
 		break;
 	case PROCESSOR_ARCHITECTURE_AMD64:
+		logger_log(DOMAIN, LOG_INFO, "Loading x86_64 hook DLL.");
 		hookdll = LoadLibrary("seamlessrdp64.dll");
 		break;
 	default:
-		messageW(L"Unsupported processor architecture.");
+		logger_log(DOMAIN, LOG_WARNING,
+			"Unsupported processor architecture: %ul",
+			si.wProcessorArchitecture);
 		break;
 
 	}
 
 	if (!hookdll) {
-		messageW(L"Could not load hook DLL. Unable to continue.");
+		logger_log(DOMAIN, LOG_ERROR, "Could not load hook DLL.");
 		goto bail_out;
 	}
 
@@ -717,21 +735,24 @@ WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmdline, int cmdshow)
 		|| !g_vchannel_reopen_fn || !g_vchannel_block_fn
 		|| !g_vchannel_unblock_fn || !g_vchannel_write_fn || !g_vchannel_read_fn
 		|| !g_vchannel_strfilter_unicode_fn || !g_vchannel_debug_fn) {
-		messageW
-			(L"Hook DLL doesn't contain the correct functions. Unable to continue.");
+
+		logger_log(DOMAIN, LOG_ERROR,
+			"Hook DLL doesn't export the correct functions.");
+
 		goto close_hookdll;
 	}
 
 	/* Check if the DLL is already loaded */
 	switch (instance_count_fn()) {
 	case 0:
-		messageW(L"Hook DLL failed to initialize.");
+		logger_log(DOMAIN, LOG_ERROR, "Hook DLL failed to initialize.");
 		goto close_hookdll;
 		break;
 	case 1:
 		break;
 	default:
-		messageW(L"Another running instance of Seamless RDP detected.");
+		logger_log(DOMAIN, LOG_ERROR,
+			"Another running instance of Seamles RDP detected");
 		goto close_hookdll;
 	}
 

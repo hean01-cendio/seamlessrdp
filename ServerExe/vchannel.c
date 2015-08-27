@@ -30,12 +30,15 @@
 #include <wtsapi32.h>
 #include <cchannel.h>
 
+#include "shared.h"
 #include "vchannel.h"
 
 #define CHANNELNAME "seamrdp"
 
 #define INVALID_CHARS ","
 #define REPLACEMENT_CHAR '_'
+
+#define DOMAIN "vchannel"
 
 static HANDLE g_mutex = NULL;
 static HANDLE g_vchannel = NULL;
@@ -55,6 +58,7 @@ vchannel_debug(char *format, ...)
 	vchannel_strfilter(buf);
 
 	vchannel_write("DEBUG", buf);
+	logger_log(DOMAIN, LOG_DEBUG0, "%s", buf);
 }
 
 #define CONVERT_BUFFER_SIZE 1024
@@ -109,19 +113,32 @@ vchannel_open()
 	g_vchannel = WTSVirtualChannelOpen(WTS_CURRENT_SERVER_HANDLE,
 		WTS_CURRENT_SESSION, CHANNELNAME);
 
-	if (g_vchannel == NULL)
+	if (g_vchannel == NULL) {
+		logger_log(DOMAIN, LOG_ERROR, "Failed to open virtual channel: %ul",
+			GetLastError());
 		return -1;
+	}
 
 	g_mutex = CreateMutex(NULL, FALSE, "Local\\SeamlessChannel");
+	if (!g_mutex)
+		logger_log(DOMAIN, LOG_ERROR,
+			"Failed to create mutex 'Local\\SeamlessChannel': %ul",
+			GetLastError());
 
 	g_vchannel_serial =
 		CreateSemaphore(NULL, 0, INT_MAX, "Local\\SeamlessRDPSerial");
+	if (!g_vchannel_serial)
+		logger_log(DOMAIN, LOG_ERROR,
+			"Failed to create semaphore 'Local\\SeamlessRDPSerial': %ul",
+			GetLastError());
 
 	if (!g_mutex || !g_vchannel_serial) {
 		WTSVirtualChannelClose(g_vchannel);
 		g_vchannel = NULL;
 		return -1;
 	}
+
+	logger_log(DOMAIN, LOG_INFO, "vchannel successfully opened.");
 
 	return 0;
 }
@@ -138,8 +155,11 @@ vchannel_reopen()
 
 	vchannel_unblock();
 
-	if (g_vchannel == NULL)
+	if (g_vchannel == NULL) {
+		logger_log(DOMAIN, LOG_ERROR, "Failed to reopen vchannel: %ul",
+			GetLastError());
 		return -1;
+	}
 
 	return 0;
 }
@@ -150,6 +170,8 @@ vchannel_close()
 	g_opencount--;
 	if (g_opencount > 0)
 		return;
+
+	logger_log(DOMAIN, LOG_INFO, "Closing vchannel");
 
 	if (g_mutex)
 		CloseHandle(g_mutex);
@@ -187,6 +209,8 @@ vchannel_read(char *line, size_t length)
 		sizeof(buffer) - size, &bytes_read);
 
 	if (!result) {
+		logger_log(DOMAIN, LOG_ERROR, "Read failed on vchannel: %ul",
+			GetLastError());
 		errno = EIO;
 		return -1;
 	}
@@ -290,8 +314,11 @@ vchannel_write(const char *command, const char *format, ...)
 
 	ReleaseMutex(g_mutex);
 
-	if (!result)
+	if (!result) {
+		logger_log(DOMAIN, LOG_ERROR, "Write failed on vchannel: %ul",
+			GetLastError());
 		return -1;
+	}
 
 	return bytes_written;
 }
