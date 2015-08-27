@@ -23,10 +23,23 @@
 
 #include <windows.h>
 
+#define LOG_DEBUG0  0
+#define LOG_DEBUG1  1
+#define LOG_DEBUG2  2
+#define LOG_DEBUG3  3
+#define LOG_DEBUG4  4
+#define LOG_DEBUG5  5
+#define LOG_INFO    6
+#define LOG_WARNING 7
+#define LOG_ERROR   8
+
 long hwnd_to_long(HWND hwnd);
 HWND long_to_hwnd(long val);
 
 HICON get_icon(HWND hwnd, int large);
 int extract_icon(HICON icon, char *buffer, int maxlen);
+
+void logger_log(const char *domain, int level, const char *format, ...);
+void logger_rotate();
 
 #endif /* _SHARED_H */

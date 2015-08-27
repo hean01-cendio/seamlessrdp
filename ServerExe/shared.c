@@ -20,8 +20,11 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <time.h>
 
 #include "shared.h"
+
+#define DOMAIN "shared"
 
 /* 
    From http://msdn.microsoft.com/en-us/library/aa384203(VS.85).aspx:
@@ -175,4 +178,55 @@ extract_icon(HICON icon, char *buffer, int maxlen)
 
   fail:
 	return ret;
+}
+
+static const char *level2str[] = {
+	"Debug",
+	"Debug",
+	"Dbeug",
+	"Debug",
+	"Debug",
+	"Debug",
+	"Info",
+	"Warning",
+	"Error"
+};
+
+void
+logger_log(const char *domain, int level, const char *format, ...)
+{
+	HANDLE h;
+	DWORD wb;
+	char fname[MAX_PATH];
+	char line[512];
+	char buf[1024];
+	va_list argp;
+
+	va_start(argp, format);
+	_vsnprintf(line, sizeof(line), format, argp);
+	va_end(argp);
+
+	snprintf(buf, sizeof(buf), "%ul, %s(%s): %s\r\n", time(NULL), level2str[level], domain, line);
+	snprintf(fname, sizeof(fname), "%s\\seamlessrdp.log", getenv("TEMP"));
+
+	h = CreateFile(fname, FILE_APPEND_DATA, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE)
+		return;
+
+	WriteFile(h, buf, strlen(buf), &wb, NULL);
+
+	CloseHandle(h);
+}
+
+void
+logger_rotate()
+{
+	BOOL res;
+	char src[MAX_PATH];
+	char dest[MAX_PATH];
+	snprintf(src, sizeof(src), "%s\\seamlessrdp.log", getenv("TEMP"));
+	snprintf(dest, sizeof(dest), "%s\\seamlessrdp.log.old", getenv("TEMP"));
+	res = MoveFile(src, dest);
+	if (!res && GetLastError() != ERROR_FILE_NOT_FOUND)
+		logger_log(DOMAIN, LOG_WARNING, "Failed to move logfile: %ul", GetLastError());
 }
